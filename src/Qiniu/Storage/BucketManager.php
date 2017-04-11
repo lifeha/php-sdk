@@ -3,6 +3,7 @@ namespace Qiniu\Storage;
 
 use Qiniu\Auth;
 use Qiniu\Config;
+use Qiniu\Zone;
 use Qiniu\Http\Client;
 use Qiniu\Http\Error;
 
@@ -13,14 +14,15 @@ use Qiniu\Http\Error;
  */
 final class BucketManager
 {
-    /**
-     * @var Qiniu\Auth 账号管理密钥对
-     */
     private $auth;
+    private $zone;
 
-    public function __construct(Auth $auth)
+    public function __construct(Auth $auth, Zone $zone = null)
     {
         $this->auth = $auth;
+        if ($zone === null) {
+            $this->zone = new Zone();
+        }
     }
 
     /**
@@ -30,7 +32,7 @@ final class BucketManager
      */
     public function buckets()
     {
-        return $this->rsget('/buckets');
+        return $this->rsGet('/buckets');
     }
 
     /**
@@ -56,24 +58,16 @@ final class BucketManager
     public function listFiles($bucket, $prefix = null, $marker = null, $limit = 1000, $delimiter = null)
     {
         $query = array('bucket' => $bucket);
-        if (!empty($prefix)) {
-            $query['prefix'] = $prefix;
-        }
-        if (!empty($marker)) {
-            $query['marker'] = $marker;
-        }
-        if (!empty($limit)) {
-            $query['limit'] = $limit;
-        }
-        if (!empty($delimiter)) {
-            $query['delimiter'] = $delimiter;
-        }
+        \Qiniu\setWithoutEmpty($query, 'prefix', $prefix);
+        \Qiniu\setWithoutEmpty($query, 'marker', $marker);
+        \Qiniu\setWithoutEmpty($query, 'limit', $limit);
+        \Qiniu\setWithoutEmpty($query, 'delimiter', $delimiter);
         $url = Config::RSF_HOST . '/list?' . http_build_query($query);
         list($ret, $error) = $this->get($url);
-        if ($ret == null) {
+        if ($ret === null) {
             return array(null, null, $error);
         }
-        $marker = isset($ret['marker']) ? $ret['marker'] : null;
+        $marker = array_key_exists('marker', $ret) ? $ret['marker'] : null;
         return array($ret['items'], $marker, null);
     }
 
@@ -141,11 +135,14 @@ final class BucketManager
      * @return mixed      成功返回NULL，失败返回对象Qiniu\Http\Error
      * @link  http://developer.qiniu.com/docs/v6/api/reference/rs/copy.html
      */
-    public function copy($from_bucket, $from_key, $to_bucket, $to_key)
+    public function copy($from_bucket, $from_key, $to_bucket, $to_key, $force = false)
     {
         $from = \Qiniu\entry($from_bucket, $from_key);
         $to = \Qiniu\entry($to_bucket, $to_key);
         $path = '/copy/' . $from . '/' . $to;
+        if ($force) {
+            $path .= '/force/true';
+        }
         list(, $error) = $this->rsPost($path);
         return $error;
     }
@@ -161,11 +158,14 @@ final class BucketManager
      * @return mixed      成功返回NULL，失败返回对象Qiniu\Http\Error
      * @link  http://developer.qiniu.com/docs/v6/api/reference/rs/move.html
      */
-    public function move($from_bucket, $from_key, $to_bucket, $to_key)
+    public function move($from_bucket, $from_key, $to_bucket, $to_key, $force = false)
     {
         $from = \Qiniu\entry($from_bucket, $from_key);
         $to = \Qiniu\entry($to_bucket, $to_key);
         $path = '/move/' . $from . '/' . $to;
+        if ($force) {
+            $path .= '/force/true';
+        }
         list(, $error) = $this->rsPost($path);
         return $error;
     }
@@ -211,13 +211,18 @@ final class BucketManager
      *                                  ]
      * @link  http://developer.qiniu.com/docs/v6/api/reference/rs/fetch.html
      */
-    public function fetch($url, $bucket, $key)
+    public function fetch($url, $bucket, $key = null)
     {
 
         $resource = \Qiniu\base64_urlSafeEncode($url);
         $to = \Qiniu\entry($bucket, $key);
         $path = '/fetch/' . $resource . '/to/' . $to;
-        return $this->ioPost($path);
+
+        $ak = $this->auth->getAccessKey();
+        $ioHost = $this->zone->getIoHost($ak, $bucket);
+
+        $url = $ioHost . $path;
+        return $this->post($url, null);
     }
 
     /**
@@ -233,7 +238,12 @@ final class BucketManager
     {
         $resource = \Qiniu\entry($bucket, $key);
         $path = '/prefetch/' . $resource;
-        list(, $error) = $this->ioPost($path);
+
+        $ak = $this->auth->getAccessKey();
+        $ioHost = $this->zone->getIoHost($ak, $bucket);
+
+        $url = $ioHost . $path;
+        list(, $error) = $this->post($url, null);
         return $error;
     }
 
@@ -257,6 +267,24 @@ final class BucketManager
     {
         $params = 'op=' . implode('&op=', $operations);
         return $this->rsPost('/batch', $params);
+    }
+
+    /**
+     * 设置文件的生命周期
+     *
+     * @param $bucket 设置文件生命周期文件所在的空间
+     * @param $key    设置文件生命周期文件的文件名
+     * @param $days   设置该文件多少天后删除，当$days设置为0时表示取消该文件的生命周期
+     *
+     * @return Mixed
+     * @link https://developer.qiniu.com/kodo/api/update-file-lifecycle
+     */
+    public function deleteAfterDays($bucket, $key, $days)
+    {
+        $entry = \Qiniu\entry($bucket, $key);
+        $url = "/deleteAfterDays/$entry/$days";
+        list(, $error) = $this->rsPost($url);
+        return $error;
     }
 
     private function rsPost($path, $body = null)
@@ -294,7 +322,7 @@ final class BucketManager
         if (!$ret->ok()) {
             return array(null, new Error($url, $ret));
         }
-        $r = $ret->body == null ? array() : $ret->json();
+        $r = ($ret->body === null) ? array() : $ret->json();
         return array($r, null);
     }
 
@@ -338,7 +366,7 @@ final class BucketManager
 
     private static function twoKeyBatch($operation, $source_bucket, $key_pairs, $target_bucket)
     {
-        if ($target_bucket == null) {
+        if ($target_bucket === null) {
             $target_bucket = $source_bucket;
         }
         $data = array();

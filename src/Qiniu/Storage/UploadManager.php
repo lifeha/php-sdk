@@ -13,9 +13,9 @@ use Qiniu\Storage\FormUploader;
  */
 final class UploadManager
 {
-    public $config;
+    private $config;
 
-    public function __construct($config = null)
+    public function __construct(Config $config = null)
     {
         if ($config === null) {
             $config = new Config();
@@ -109,6 +109,7 @@ final class UploadManager
                 $checkCrc
             );
         }
+
         $up = new ResumeUploader(
             $upToken,
             $key,
@@ -118,12 +119,14 @@ final class UploadManager
             $mime,
             $this->config
         );
-        return $up->upload();
+        $ret = $up->upload();
+        fclose($file);
+        return $ret;
     }
 
     public static function trimParams($params)
     {
-        if ($params == null) {
+        if ($params === null) {
             return null;
         }
         $ret = array();

@@ -34,7 +34,7 @@ final class PersistentFop
     private $notify_url;
 
     /**
-     * @var 是否强制覆盖已有的重名文件
+     * @var boolean 是否强制覆盖已有的重名文件
      */
     private $force;
 
@@ -64,14 +64,9 @@ final class PersistentFop
         if (is_array($fops)) {
             $fops = implode(';', $fops);
         }
-
         $params = array('bucket' => $this->bucket, 'key' => $key, 'fops' => $fops);
-        if (!empty($this->pipeline)) {
-            $params['pipeline'] = $this->pipeline;
-        }
-        if (!empty($this->notify_url)) {
-            $params['notifyURL'] = $this->notify_url;
-        }
+        \Qiniu\setWithoutEmpty($params, 'pipeline', $this->pipeline);
+        \Qiniu\setWithoutEmpty($params, 'notifyURL', $this->notify_url);
         if ($this->force) {
             $params['force'] = 1;
         }

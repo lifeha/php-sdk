@@ -38,19 +38,19 @@ final class Operation
         if (!$resp->ok()) {
             return array(null, new Error($url, $resp));
         }
-        if ($resp->json() != null) {
+        if ($resp->json() !== null) {
             return array($resp->json(), null);
         }
         return array($resp->body, null);
     }
 
-    public function buildUrl($key, $fops)
+    public function buildUrl($key, $fops, $protocol = 'http')
     {
         if (is_array($fops)) {
             $fops = implode('|', $fops);
         }
 
-        $url = "http://$this->domain/$key?$fops";
+        $url = $protocol."://$this->domain/$key?$fops";
         if ($this->auth !== null) {
             $url = $this->auth->privateDownloadUrl($url, $this->token_expire);
         }

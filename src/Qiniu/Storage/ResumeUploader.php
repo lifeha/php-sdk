@@ -20,10 +20,10 @@ final class ResumeUploader
     private $size;
     private $params;
     private $mime;
-    private $progressHandler;
     private $contexts;
     private $host;
     private $currentUrl;
+    private $config;
 
     /**
      * 上传二进制流到七牛
@@ -52,10 +52,15 @@ final class ResumeUploader
         $this->size = $size;
         $this->params = $params;
         $this->mime = $mime;
-        $this->host = $config::$upHost;
         $this->contexts = array();
-    }
+        $this->config = $config;
 
+        list($upHost, $err) = $config->zone->getUpHostByToken($upToken);
+        if ($err != null) {
+            throw new \Exception($err, 1);
+        }
+        $this->host = $upHost;
+    }
 
     /**
      * 上传操作
@@ -67,7 +72,6 @@ final class ResumeUploader
             $blockSize = $this->blockSize($uploaded);
             $data = fread($this->inputStream, $blockSize);
             if ($data === false) {
-                fclose($this->inputStream);
                 throw new \Exception("file read failed", 1);
             }
             $crc = \Qiniu\crc32_data($data);
@@ -77,7 +81,11 @@ final class ResumeUploader
                 $ret = $response->json();
             }
             if ($response->statusCode < 0) {
-                $this->host = $config::$upHostBackup;
+                list($bakHost, $err) = $this->config->zone->getBackupUpHostByToken($this->upToken);
+                if ($err != null) {
+                    return array(null, $err);
+                }
+                $this->host = $bakHost;
             }
             if ($response->needRetry() || !isset($ret['crc32']) || $crc != $ret['crc32']) {
                 $response = $this->makeBlock($data, $blockSize);
@@ -85,13 +93,11 @@ final class ResumeUploader
             }
 
             if (! $response->ok() || !isset($ret['crc32'])|| $crc != $ret['crc32']) {
-                fclose($this->inputStream);
                 return array(null, new Error($this->currentUrl, $response));
             }
             array_push($this->contexts, $ret['ctx']);
             $uploaded += $blockSize;
         }
-        fclose($this->inputStream);
         return $this->makeFile();
     }
 
